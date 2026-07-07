@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: oncall-copilot
+metadata:
+    template: azd-init@1.23.3
+services:
+    on-call-copilot-multi-agent:
+        project: .
+        host: azure.ai.agent
+        language: docker
+        docker:
+            remoteBuild: true
+        config:
+            container:
+                resources:
+                    cpu: "1"
+                    memory: 2Gi
+            deployments:
+                - model:
+                    format: OpenAI
+                    name: model-router
+                    version: "2025-11-18"
+                  name: model-router
+                  sku:
+                    capacity: 156
+                    name: GlobalStandard
+            startupCommand: python main.py
