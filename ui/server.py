@@ -22,6 +22,9 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+from http.cookies import SimpleCookie
+
+from app.sso import sso_manager, SSO_ENABLED
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -297,6 +300,39 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
+    # SSO helpers
+    def _get_session_user(self) -> Optional[dict]:
+        """Extract user from session cookie."""
+        cookie_header = self.headers.get("Cookie", "")
+        if not cookie_header:
+            return None
+
+        # Parse cookies
+        cookies = SimpleCookie()
+        cookies.load(cookie_header)
+
+        session_token = cookies.get("session", None)
+        if not session_token:
+            return None
+
+        user = sso_manager.verify_session_token(session_token.value)
+        if user:
+            return {
+                "user_id": user.user_id,
+                "display_name": user.display_name,
+                "email": user.email,
+                "tenant_id": user.tenant_id,
+            }
+        return None
+
+    def _set_session_cookie(self, token: str) -> None:
+        """Set session cookie in response."""
+        self.send_header("Set-Cookie", f"session={token}; Path=/; HttpOnly; SameSite=Lax")
+
+    def _clear_session_cookie(self) -> None:
+        """Clear session cookie."""
+        self.send_header("Set-Cookie", "session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path   = parsed.path.rstrip("/") or "/"
@@ -306,13 +342,79 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(HTML_FILE.read_bytes())
             return
 
+        # SSO routes
+        if path == "/auth/login":
+            if not sso_manager.is_enabled():
+                self._send_json({"error": "SSO not configured"}, 400)
+                return
+            state = sso_manager.generate_state()
+            auth_url = sso_manager.get_auth_url(state)
+            # Store state in a cookie for verification
+            self.send_response(302)
+            self.send_header("Location", auth_url)
+            self.send_header("Set-Cookie", f"oauth_state={state}; Path=/; HttpOnly; SameSite=Lax")
+            self.end_headers()
+            return
+
+        if path == "/auth/callback":
+            if not sso_manager.is_enabled():
+                self._send_json({"error": "SSO not configured"}, 400)
+                return
+            code = qs.get("code", [""])[0]
+            state = qs.get("state", [""])[0]
+            # Verify state matches
+            cookie_header = self.headers.get("Cookie", "")
+            cookies = SimpleCookie()
+            if cookie_header:
+                cookies.load(cookie_header)
+            stored_state = cookies.get("oauth_state", None)
+            if not stored_state or stored_state.value != state:
+                self._send_json({"error": "Invalid state"}, 400)
+                return
+            # Exchange code for token
+            user = sso_manager.exchange_code_for_token(code)
+            if not user:
+                self._send_json({"error": "Failed to authenticate"}, 401)
+                return
+            # Create session
+            session_token = sso_manager.create_session_token(user)
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self._set_session_cookie(session_token)
+            self.send_header("Set-Cookie", "oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+            self.end_headers()
+            return
+
+        if path == "/auth/logout":
+            self.send_response(302)
+            self._clear_session_cookie()
+            if sso_manager.is_enabled():
+                logout_url = sso_manager.get_logout_url()
+                self.send_header("Location", logout_url)
+            else:
+                self.send_header("Location", "/")
+            self.end_headers()
+            return
+
+        if path == "/api/user":
+            user = self._get_session_user()
+            self._send_json({
+                "authenticated": bool(user),
+                "user": user,
+                "sso_enabled": sso_manager.is_enabled(),
+            })
+            return
+
         if path == "/api/config":
             endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "")
+            user = self._get_session_user()
             self._send_json({
                 "endpoint": endpoint,
                 "agent_name": os.environ.get("AGENT_NAME", "oncall-copilot"),
                 "agent_version": os.environ.get("AGENT_VERSION", "latest"),
                 "configured": bool(endpoint),
+                "sso_enabled": sso_manager.is_enabled(),
+                "user": user,
             })
             return
 

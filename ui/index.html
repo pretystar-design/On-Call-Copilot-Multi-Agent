@@ -110,6 +110,43 @@ select { font-family: inherit; }
   margin-left: 4px;
 }
 .topbar-spacer { flex: 1; }
+.user-info {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 11px;
+  background: var(--bg3);
+}
+.user-avatar {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--green));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; color: white;
+}
+.user-name { color: var(--text); font-weight: 600; }
+.user-email { color: var(--text2); }
+.login-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px; font-weight: 600;
+  color: white;
+  background: var(--accent);
+  border: none;
+  transition: all 0.15s;
+}
+.login-btn:hover { filter: brightness(1.1); }
+.logout-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px; font-weight: 600;
+  color: var(--text2);
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  transition: all 0.15s;
+}
+.logout-btn:hover { border-color: var(--red); color: var(--red); background: rgba(255,123,114,0.06); }
 .live-badge {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 12px;
@@ -842,6 +879,16 @@ select { font-family: inherit; }
   <span class="topbar-title">On-Call Copilot</span>
   <span class="topbar-sub">— Multi-Agent Incident Response</span>
   <div class="topbar-spacer"></div>
+  <div id="user-section" style="display:none;">
+    <div class="user-info">
+      <div class="user-avatar" id="user-avatar">U</div>
+      <span class="user-name" id="user-name">User</span>
+      <button class="logout-btn" onclick="logout()" title="Sign out">Sign out</button>
+    </div>
+  </div>
+  <div id="login-section" style="display:none;">
+    <button class="login-btn" onclick="login()">Sign in with Azure AD</button>
+  </div>
   <div id="live-badge" class="live-badge" style="display:none;">
     <div class="live-dot"></div>
     <span id="agent-label">oncall-copilot:latest</span>
@@ -1039,8 +1086,38 @@ const state = {
   activeFile: null,
   loading: false,
   result: null,
-  config: { endpoint: '', agentName: 'oncall-copilot', agentVersion: '' },
+  config: { endpoint: '', agentName: 'oncall-copilot', agentVersion: '', ssoEnabled: false, user: null },
 };
+
+// ═══════════════════════════════════════  SSO  ═════════════════════════════════════
+function login() {
+  window.location.href = '/auth/login';
+}
+
+function logout() {
+  window.location.href = '/auth/logout';
+}
+
+function updateUserUI(user) {
+  const userSection = document.getElementById('user-section');
+  const loginSection = document.getElementById('login-section');
+  const avatar = document.getElementById('user-avatar');
+  const name = document.getElementById('user-name');
+
+  if (user) {
+    userSection.style.display = 'block';
+    loginSection.style.display = 'none';
+    name.textContent = user.display_name || user.user_id || 'User';
+    if (user.display_name) {
+      avatar.textContent = user.display_name.charAt(0).toUpperCase();
+    } else {
+      avatar.textContent = 'U';
+    }
+  } else {
+    userSection.style.display = 'none';
+    loginSection.style.display = state.config.ssoEnabled ? 'block' : 'none';
+  }
+}
 
 // ═══════════════════════════════════════  THEME  ═══════════════════════════════════
 function applyTheme(theme) {
@@ -1079,8 +1156,11 @@ async function loadConfig() {
       endpoint: d.endpoint,
       agentName: d.agent_name,
       agentVersion: d.agent_version === 'latest' ? '' : d.agent_version,
+      ssoEnabled: d.sso_enabled,
+      user: d.user,
     };
     updateConfigUI(d);
+    updateUserUI(d.user);
   } catch(e) {
     console.warn('Could not load config', e);
   }
