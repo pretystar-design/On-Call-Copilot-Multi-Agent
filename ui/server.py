@@ -87,6 +87,76 @@ def _get_credential():
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
+CHAT_SYSTEM_PROMPT = (
+    "You are an incident-response AI assistant helping an SRE team. "
+    "Answer questions concisely and factually. You can answer general "
+    "operational questions about incident response, runbooks, cloud "
+    "infrastructure, and troubleshooting. If you don't know something, "
+    "say so rather than guessing."
+)
+
+
+def _chat_agent(messages: list[dict]) -> str:
+    """Send a conversational chat to the agent and return the text response.
+
+    *messages* is a list of ``{"role": "user"|"assistant", "content": "..."}``.
+    A system prompt is prepended for conversational mode.
+    """
+    t0 = time.time()
+
+    # Build the input with system prompt + conversation history
+    chat_input: list[dict] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        chat_input.append({"role": role, "content": content})
+
+    # The last user message becomes the main input; prior history goes into
+    # the conversation context via the previous assistant messages.
+    body = {"input": chat_input}
+
+    if LOCAL_MODE:
+        r = requests.post(
+            f"{LOCAL_SERVER_URL}/responses",
+            json=body, timeout=180,
+        )
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"Local agent error ({r.status_code}): {r.text[:500]}"
+            )
+        raw = r.json()
+    else:
+        endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "").rstrip("/")
+        if not endpoint:
+            raise ValueError(
+                "AZURE_AI_PROJECT_ENDPOINT env var is not set.\n"
+                "Set LOCAL_MODE=true / MOCK_MODE=true for local testing."
+            )
+        agent_name = os.environ.get("AGENT_NAME", "oncall-copilot")
+        agent_version = os.environ.get("AGENT_VERSION", "")
+        agent_path = urllib.parse.quote(agent_name, safe="")
+        headers = _get_auth_headers()
+        r = requests.post(
+            f"{endpoint}/agents/{agent_path}/endpoint/protocols/openai/responses?api-version=2025-11-15-preview",
+            headers=headers, json=body, timeout=180,
+        )
+        raw = r.json()
+        if raw.get("error"):
+            raise RuntimeError(
+                f"Agent error ({r.status_code}): {raw['error'].get('message', json.dumps(raw['error']))}"
+            )
+
+    # Extract text from the response
+    text_parts: list[str] = []
+    for output in raw.get("output", []):
+        for c in output.get("content", []):
+            text = c.get("text", "").strip()
+            if text:
+                text_parts.append(text)
+
+    return "\n".join(text_parts) if text_parts else "(no response)"
+
+
 def _get_auth_headers() -> dict:
     """Return bearer token headers using the cached credential."""
     cred = _get_credential()
@@ -280,6 +350,22 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
+        if self.path == "/api/chat":
+            try:
+                body_bytes = self._read_body()
+                payload = json.loads(body_bytes)
+                messages = payload.get("messages", [])
+                if not messages:
+                    self._send_json({"error": "messages is required"}, 400)
+                    return
+                response_text = _chat_agent(messages)
+                self._send_json({"response": response_text, "status": "ok"})
+            except requests.Timeout:
+                self._send_json({"error": "Request timed out (180s)."}, 504)
+            except Exception as exc:
+                self._send_json({"error": str(exc), "status": "error"}, 500)
+            return
+
         if self.path == "/api/invoke":
             try:
                 body_bytes = self._read_body()
