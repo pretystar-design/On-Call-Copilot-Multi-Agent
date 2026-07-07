@@ -16,6 +16,12 @@
 - enable memory & Persistence: https://learn.microsoft.com/en-us/agent-framework/get-started/memory?pivots=programming-language-python
 - run whole solution without client.agents.create_version and real AI capacity
 - Add a chat box to chat with AI
+- Add a button to index the RAG documents
+- Add a button to trigger patrol and Auto find issues from ELK or Infra topology
+- Use AgentSession to keep conversation context between invocations, https://learn.microsoft.com/en-us/agent-framework/agents/conversations/?pivots=programming-language-python
+- Use InMemoryHistoryProvider: https://learn.microsoft.com/en-us/agent-framework/agents/conversations/context-providers?pivots=programming-language-python
+- auto find all subscription name/id or get subscription name/id from user chat in agent.py
+
 ## Non-function requirement:
 
 <!--

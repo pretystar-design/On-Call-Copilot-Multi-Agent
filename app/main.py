@@ -27,10 +27,10 @@ from typing import Any
 
 import jsonschema
 import uvicorn
-from azure.identity import DefaultAzureCredential
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.config import get_azure_credential
 from app.mock_router import MockModelResponse, get_mock_response
 from app.prompting import SYSTEM_INSTRUCTION, build_user_message
 from app.schemas import INCIDENT_INPUT_SCHEMA, TRIAGE_OUTPUT_SCHEMA
@@ -73,7 +73,7 @@ def _get_client() -> Any:
 
         _client = AIProjectClient(
             endpoint=AZURE_AI_PROJECT_ENDPOINT,
-            credential=DefaultAzureCredential(),
+            credential=get_azure_credential(),
         )
     return _client
 

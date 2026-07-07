@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -28,6 +28,9 @@ class Config:
     azure_client_secret: str = field(
         default_factory=lambda: os.environ.get("AZURE_CLIENT_SECRET", "")
     )
+    
+    # Azure subscription list (populated programmatically by subscription resolver)
+    azure_subscriptions: List[str] = field(default_factory=list)
 
     # GCP
     gcp_project_id: str = field(
@@ -47,3 +50,21 @@ class Config:
 
 
 config = Config()
+
+
+def get_azure_credential():
+    """Create an Azure credential using service principal secrets when available."""
+    from azure.identity import ClientSecretCredential, DefaultAzureCredential
+
+    tenant_id = os.environ.get("AZURE_TENANT_ID") or getattr(config, "azure_tenant_id", "")
+    client_id = os.environ.get("AZURE_CLIENT_ID") or getattr(config, "azure_client_id", "")
+    client_secret = os.environ.get("AZURE_CLIENT_SECRET") or getattr(config, "azure_client_secret", "")
+
+    if tenant_id and client_id and client_secret:
+        return ClientSecretCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+
+    return DefaultAzureCredential()

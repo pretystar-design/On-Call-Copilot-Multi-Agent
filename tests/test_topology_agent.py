@@ -118,7 +118,13 @@ class TestGCPTopologyAgent:
 class TestAzureTopologyAgent:
     def test_empty_result_when_no_subscription(self):
         agent = AzureTopologyAgent()
-        with patch.object(config, "azure_subscription_id", ""):
+        with (
+            patch.object(config, "azure_subscription_id", ""),
+            patch.object(agent, "_ensure_connector") as mock_connector,
+        ):
+            connector = MagicMock()
+            connector.list_subscriptions.return_value = []
+            mock_connector.return_value = connector
             result = agent.fetch_topology()
         assert result["summary"] == "No Azure topology available."
         assert result["error"] is not None

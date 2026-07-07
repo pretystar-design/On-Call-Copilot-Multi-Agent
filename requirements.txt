@@ -7,6 +7,10 @@ agent-framework-orchestrations==1.0.0b260424
 agent-dev-cli==0.0.1b260427
 azure-ai-projects>=2.1.0,<3.0
 azure-identity
+azure-mgmt-compute
+azure-mgmt-containerservice
+azure-mgmt-network
+azure-mgmt-resource
 azure-search-documents>=11.6.0
 openai
 debugpy

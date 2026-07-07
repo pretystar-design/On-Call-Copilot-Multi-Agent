@@ -11,8 +11,9 @@ from agent_framework_foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_orchestrations import ConcurrentBuilder
 from agent_framework_openai import OpenAIChatClient
-from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+
+from app.config import get_azure_credential
 
 from app.agents.comms import COMMS_INSTRUCTIONS
 from app.agents.pir import PIR_INSTRUCTIONS
@@ -40,7 +41,7 @@ print(f"[oncall-copilot] AZURE_OPENAI_CHAT_DEPLOYMENT_NAME={_presence('AZURE_OPE
 print(f"[oncall-copilot] MCP_SERVERS={'set' if os.environ.get('MCP_SERVERS') else 'unset'}", flush=True)
 print(f"[oncall-copilot] SKILLS_DIR={os.environ.get('SKILLS_DIR', 'skills/elastic/ (default)')}", flush=True)
 
-_credential = DefaultAzureCredential()
+_credential = get_azure_credential()
 
 
 def _fetch_topology_context() -> str:

@@ -41,11 +41,17 @@ class AzureTopologyAgent:
             self._initialized = True
         return self._connector  # type: ignore[return-value]
 
-    def fetch_topology(self) -> Dict[str, Any]:
+    def fetch_topology(self, subscription_id: Optional[str] = None) -> Dict[str, Any]:
         """Fetch Azure topology, returning a structured result dict.
 
         The result always contains at minimum a ``topology`` key (may be
         empty) and an ``inventory`` key.
+
+        Args:
+            subscription_id: Optional Azure subscription ID override.
+                If not provided, falls back to config.azure_subscription_id.
+                If that is also empty, attempts to auto-discover available
+                subscriptions and uses the first active one.
 
         Returns:
             dict with keys:
@@ -54,10 +60,27 @@ class AzureTopologyAgent:
                 - ``summary``: human-readable summary string
                 - ``error``: optional error description
         """
-        sub_id = config.azure_subscription_id
+        sub_id = subscription_id or config.azure_subscription_id
         if not sub_id:
-            logger.info("AZURE_SUBSCRIPTION_ID not set; skipping topology discovery")
-            return self._empty_result("AZURE_SUBSCRIPTION_ID not configured")
+            # Auto-discover subscriptions: try to find a default
+            try:
+                connector = self._ensure_connector()
+                subs = connector.list_subscriptions()
+                # Pick the first active subscription
+                active = [s for s in subs if s.state == "Enabled"]
+                if active:
+                    sub_id = active[0].subscription_id
+                    logger.info(
+                        "Auto-resolved subscription: %s (%s)",
+                        sub_id,
+                        active[0].subscription_name,
+                    )
+                else:
+                    logger.info("No AZURE_SUBSCRIPTION_ID set and no active subscriptions found")
+                    return self._empty_result("AZURE_SUBSCRIPTION_ID not configured and no active subscriptions auto-discovered")
+            except Exception as e:
+                logger.warning("Failed to auto-discover subscriptions: %s", e)
+                return self._empty_result("AZURE_SUBSCRIPTION_ID not configured")
 
         # Try fresh cache first
         cached = load_cache(AZURE_PROVIDER, sub_id)

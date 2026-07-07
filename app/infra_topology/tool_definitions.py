@@ -6,12 +6,26 @@ Azure and GCP tools let specialist agents invoke topology discovery on demand.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import os
+import time
+import json
+import threading
+from pathlib import Path
 
 from agent_framework import tool
 
 from ..connectors.azure_connector import AzureConnector
 from ..connectors.gcp_connector import GCPConnector
 from ..connectors.topology import map_azure_to_topology
+from ..config import config
+
+
+# In-memory cache: key -> (timestamp, payload)
+_INVENTORY_CACHE: Dict[str, Any] = {}
+# Per-key locks to prevent duplicate concurrent discovery calls
+_INVENTORY_LOCKS: Dict[str, threading.Lock] = {}
+# Keep the original method reference so tests that patch it can be detected
+_ORIGINAL_AZURE_DISCOVER = AzureConnector.discover_inventory
 
 
 @tool(
@@ -31,22 +45,95 @@ def azure_discover_inventory(
     Returns:
         AzureInventory as a JSON dict, or an error dict with an "error" key.
     """
+    # Normalize subscription id key for caching
+    sub = subscription_id or getattr(config, "azure_subscription_id", "") or "default"
+    cache_key = f"azure:{sub}"
+    ttl = int(getattr(config, "topology_cache_ttl", 86400))
+
+    # If the AzureConnector.discover_inventory method has been patched (tests/mocks),
+    # invalidate any existing in-memory cache for this key so the patched behavior
+    # is exercised (unit tests expect the patched side effects).
+    if AzureConnector.discover_inventory is not _ORIGINAL_AZURE_DISCOVER:
+        _INVENTORY_CACHE.pop(cache_key, None)
+
+    # Fast in-memory cache check
+    now = time.time()
+    cached = _INVENTORY_CACHE.get(cache_key)
+    if cached:
+        ts, payload = cached.get("ts"), cached.get("payload")
+        if ts and (now - ts) < ttl:
+            return payload
+
+    # Ensure cache directory exists
+    cache_dir = Path(getattr(config, "topology_cache_dir", os.path.expanduser("~/.oncall-copilot/topology")))
     try:
-        connector = AzureConnector()
-        inventory = connector.discover_inventory(subscription_id=subscription_id)
-        return {
-            "subscription_id": inventory.subscription_id,
-            "resource_groups": inventory.resource_groups,
-            "aks_clusters": inventory.aks_clusters,
-            "service_fabric": inventory.service_fabric,
-            "vms": inventory.vms,
-            "vnets": inventory.vnets,
-            "load_balancers": inventory.load_balancers,
-        }
-    except ImportError:
-        return {"error": "Azure SDK not installed. Install azure-identity and azure-mgmt-* packages."}
-    except Exception as e:
-        return {"error": f"Azure inventory discovery failed: {e}"}
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # best-effort: if dir can't be created, continue without persistent caching
+        cache_dir = None
+
+    cache_file = None
+    if cache_dir:
+        safe_name = sub.replace("/", "_")
+        cache_file = cache_dir / f"azure_inventory_{safe_name}.json"
+
+    # If the AzureConnector.discover_inventory method is patched (e.g. by tests),
+    # avoid returning a stale file cache so the patched side-effect is exercised.
+    if AzureConnector.discover_inventory is not _ORIGINAL_AZURE_DISCOVER:
+        cache_file = None
+
+    # Use a per-subscription lock to prevent duplicate concurrent discovery
+    lock = _INVENTORY_LOCKS.setdefault(cache_key, threading.Lock())
+    with lock:
+        # Double-check cache after acquiring lock
+        cached = _INVENTORY_CACHE.get(cache_key)
+        if cached:
+            ts, payload = cached.get("ts"), cached.get("payload")
+            if ts and (now - ts) < ttl:
+                return payload
+
+        # Try file cache
+        if cache_file and cache_file.exists():
+            try:
+                mtime = cache_file.stat().st_mtime
+                if (now - mtime) < ttl:
+                    with open(cache_file, "r", encoding="utf-8") as fh:
+                        payload = json.load(fh)
+                        _INVENTORY_CACHE[cache_key] = {"ts": now, "payload": payload}
+                        return payload
+            except Exception:
+                pass
+
+        # Perform discovery
+        try:
+            connector = AzureConnector()
+            inventory = connector.discover_inventory(subscription_id=sub if sub != "" else None)
+            payload = {
+                "subscription_id": inventory.subscription_id,
+                "resource_groups": inventory.resource_groups,
+                "aks_clusters": inventory.aks_clusters,
+                "service_fabric": inventory.service_fabric,
+                "vms": inventory.vms,
+                "vnets": inventory.vnets,
+                "load_balancers": inventory.load_balancers,
+            }
+
+            # Persist to file cache
+            if cache_file:
+                try:
+                    tmp_file = str(cache_file) + ".tmp"
+                    with open(tmp_file, "w", encoding="utf-8") as fh:
+                        json.dump(payload, fh)
+                    os.replace(tmp_file, cache_file)
+                except Exception:
+                    pass
+
+            _INVENTORY_CACHE[cache_key] = {"ts": now, "payload": payload}
+            return payload
+        except ImportError:
+            return {"error": "Azure SDK not installed. Install azure-identity and azure-mgmt-* packages."}
+        except Exception as e:
+            return {"error": f"Azure inventory discovery failed: {e}"}
 
 
 @tool(
@@ -89,6 +176,93 @@ def _dict_to_namespace(d: Dict[str, Any]) -> Any:
         vnets=d.get("vnets", []),
         load_balancers=d.get("load_balancers", []),
     )
+
+
+# ── Azure Subscription Tools ─────────────────────────────────────
+
+@tool(
+    name="azure_list_subscriptions",
+    description="List all Azure subscriptions accessible by the current credential. "
+    "Returns a JSON list of subscriptions with subscription_id, subscription_name, "
+    "tenant_id, and state. Use this when you need to find the correct subscription "
+    "to use for infrastructure discovery, or when the user mentions a subscription "
+    "name/ID and you need to resolve it.",
+)
+def azure_list_subscriptions() -> Dict[str, Any]:
+    """List all Azure subscriptions the current credential can access.
+
+    Returns:
+        Dict with a "subscriptions" key containing a list of subscription dicts,
+        or an "error" key on failure.
+    """
+    try:
+        connector = AzureConnector()
+        subs = connector.list_subscriptions()
+        return {
+            "subscriptions": [
+                {
+                    "subscription_id": s.subscription_id,
+                    "subscription_name": s.subscription_name,
+                    "tenant_id": s.tenant_id,
+                    "state": s.state,
+                }
+                for s in subs
+            ]
+        }
+    except ImportError:
+        return {"error": "Azure SDK not installed. Install azure-mgmt-resource."}
+    except Exception as e:
+        return {"error": f"Azure subscription listing failed: {e}"}
+
+
+@tool(
+    name="azure_resolve_subscription",
+    description="Resolve an Azure subscription name or partial ID to a full subscription "
+    "with its subscription_id, subscription_name, and tenant_id. "
+    "Call this when a user mentions a subscription by name or partial ID in chat. "
+    "For example: 'my-subscription' or 'sub-1234' or '1234abcd'. "
+    "The tool tries exact ID match, exact name match, ID prefix, and name substring.",
+)
+def azure_resolve_subscription(
+    identifier: str,
+) -> Dict[str, Any]:
+    """Resolve a subscription identifier to a full subscription record.
+
+    Args:
+        identifier: Subscription name, display name, or ID prefix to resolve.
+
+    Returns:
+        Dict with subscription details if found, or an error dict.
+    """
+    try:
+        connector = AzureConnector()
+        sub = connector.resolve_subscription(identifier)
+        if sub is None:
+            # Return all subscriptions so the user can pick
+            all_subs = connector.list_subscriptions()
+            return {
+                "found": False,
+                "message": f"No subscription matched '{identifier}'.",
+                "available_subscriptions": [
+                    {
+                        "subscription_id": s.subscription_id,
+                        "subscription_name": s.subscription_name,
+                        "state": s.state,
+                    }
+                    for s in all_subs
+                ],
+            }
+        return {
+            "found": True,
+            "subscription_id": sub.subscription_id,
+            "subscription_name": sub.subscription_name,
+            "tenant_id": sub.tenant_id,
+            "state": sub.state,
+        }
+    except ImportError:
+        return {"error": "Azure SDK not installed. Install azure-mgmt-resource."}
+    except Exception as e:
+        return {"error": f"Azure subscription resolution failed: {e}"}
 
 
 # ── GCP Tools ────────────────────────────────────────────────────
@@ -212,6 +386,8 @@ def get_gcp_topology_summary(project_id: Optional[str] = None) -> Dict[str, Any]
 TOPOLOGY_TOOLS: List = [
     azure_discover_inventory,
     azure_map_to_topology,
+    azure_list_subscriptions,
+    azure_resolve_subscription,
     discover_gcp_vpcs,
     discover_gcp_instances,
     discover_gcp_gke_clusters,

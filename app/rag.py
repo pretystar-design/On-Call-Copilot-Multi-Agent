@@ -130,13 +130,14 @@ def _create_azure_search_tool(search_endpoint: str) -> FunctionTool | None:
 
     try:
         from azure.core.credentials import AzureKeyCredential
-        from azure.identity import DefaultAzureCredential
         from azure.search.documents import SearchClient
 
+        from app.config import get_azure_credential
+
         if api_key:
-            credential: AzureKeyCredential | DefaultAzureCredential = AzureKeyCredential(api_key)
+            credential: AzureKeyCredential = AzureKeyCredential(api_key)
         else:
-            credential = DefaultAzureCredential()
+            credential = get_azure_credential()
 
         client = SearchClient(
             endpoint=search_endpoint,
