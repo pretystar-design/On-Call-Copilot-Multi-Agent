@@ -4,7 +4,7 @@
 - 1. auto vpc/vms/gke/loadbalancer infra topology from gcp, identify the services in gcp gke/service fabric, save infra topology to local as analysis workflow context 2. reuse current connectors if possible 3.  connector as AI agent tool
   - get vpc/vms/gke/loadbalancer infra topology from gcp
 - enable AI agent tool: https://learn.microsoft.com/en-us/agent-framework/agents/tools/?pivots=programming-language-python
-- enable AI agent MCP, so that I can connect to ADO/ES: 
+- enable AI agent MCP, so that I can connect to ADO/ES or other MCP: 
   https://learn.microsoft.com/en-us/agent-framework/agents/tools/hosted-mcp-tools?pivots=programming-language-python 
   https://learn.microsoft.com/en-us/agent-framework/agents/tools/local-mcp-tools?pivots=programming-language-python
 
@@ -15,6 +15,7 @@
 - enable multi-turn conversations: https://learn.microsoft.com/en-us/agent-framework/get-started/multi-turn?pivots=programming-language-python
 - enable memory & Persistence: https://learn.microsoft.com/en-us/agent-framework/get-started/memory?pivots=programming-language-python
 - run whole solution without client.agents.create_version and real AI capacity
+- Add a chat box to chat with AI
 ## Non-function requirement:
 
 <!--

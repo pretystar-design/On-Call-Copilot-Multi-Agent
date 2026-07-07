@@ -18,6 +18,7 @@ from app.agents.comms import COMMS_INSTRUCTIONS
 from app.agents.pir import PIR_INSTRUCTIONS
 from app.agents.summary import SUMMARY_INSTRUCTIONS
 from app.agents.triage import TRIAGE_INSTRUCTIONS
+from app.rag import create_rag_tools
 from app.skill_loader import get_context_for_agent
 from app.infra_topology import tool_definitions as topology_tools
 from app.infra_topology.agent import AzureTopologyAgent, GCPTopologyAgent
@@ -119,13 +120,27 @@ def create_workflow():
     if skills_triage:
         print("[oncall-copilot] Agent Skills (Elastic + Microsoft) loaded for triage agent", flush=True)
 
+    _rag_guidance = (
+        "\n\nYou have access to a `search_knowledge_base` tool that can retrieve "
+        "runbooks, post-incident reviews, and operational playbooks from the "
+        "knowledge base. Use this tool whenever the incident references:\n"
+        "- specific remediation steps (e.g. failover, drain, rotation)\n"
+        "- configuration best practices for a service you are unfamiliar with\n"
+        "- historical incident patterns that might inform the current situation\n"
+        "- runbook excerpts mentioned in the incident payload\n\n"
+        "When you use the search tool, cite the source document title and "
+        "category in your output so the reader can verify the reference."
+    )
+
     def _with_context(base: str, skills_context: str = "") -> str:
-        """Combine topology context and skills context with base instructions."""
+        """Combine topology context, skills context, and RAG guidance with base instructions."""
         parts = [base]
         if topology_context:
             parts.append(topology_context)
         if skills_context:
             parts.append(skills_context)
+        if _rag_tools:
+            parts.append(_rag_guidance)
         return "\n\n".join(parts)
 
     try:
@@ -136,9 +151,16 @@ def create_workflow():
         logging.getLogger(__name__).debug("MCP tool creation failed — continuing without MCP")
         _mcp_tools = []
 
+    _rag_tools = create_rag_tools()
+    if _rag_tools:
+        print(f"[oncall-copilot] RAG: {len(_rag_tools)} knowledge-base search tool(s) enabled", flush=True)
+    else:
+        print("[oncall-copilot] RAG: disabled", flush=True)
+
     _tools = [
         *topology_tools.TOPOLOGY_TOOLS,
         *_mcp_tools,
+        *_rag_tools,
     ]
 
     triage = Agent(

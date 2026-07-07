@@ -5,8 +5,10 @@ agent-framework-foundry==1.2.0
 agent-framework-foundry-hosting==1.0.0a260424
 agent-framework-orchestrations==1.0.0b260424
 agent-dev-cli==0.0.1b260427
-azure-ai-projects
+azure-ai-projects>=2.1.0,<3.0
 azure-identity
+azure-search-documents>=11.6.0
+openai
 debugpy
 fastapi
 google-cloud-compute

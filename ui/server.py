@@ -37,6 +37,7 @@ DEMO_LABELS = {
     "demo_3_post_incident.json":         "Demo 3 — Auth TLS Cert Expiry",
 }
 SCENARIO_LABELS = {
+    "CrashLoopBackOff.json":     "CrashLoopBackOff (SEV2)",
     "scenario_1_redis_outage.json":      "Scenario 1 — Redis Cluster Down (SEV2)",
     "scenario_2_aks_scaling.json":       "Scenario 2 — AKS Scaling Failure",
     "scenario_3_dns_cascade.json":       "Scenario 3 — DNS Cascade Failure",
