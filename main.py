@@ -4,8 +4,12 @@
 import logging
 import os
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 
+import uvicorn
 from agent_framework import Agent
 from agent_framework_foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -26,6 +30,9 @@ from app.infra_topology.agent import AzureTopologyAgent, GCPTopologyAgent
 from app.mcp_tools import create_mcp_tools
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+
+# Module-level chat client state for the hosted workflow
+_chat_client = None
 
 
 def _presence(name: str) -> str:
@@ -193,6 +200,61 @@ def create_workflow():
         participants=[triage, summary, comms, pir],
         intermediate_outputs=False,
     ).build()
+
+
+def _get_chat_client():
+    """Create the Foundry/OpenAI chat client (shared with the workflow agents).
+
+    Reuses the same auth-mode detection as create_workflow() so the chat
+    endpoint and the incident workflow use a single model client.
+    """
+    global _chat_client
+    if _chat_client is not None:
+        return _chat_client
+
+    model = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "model-router")
+    azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    azure_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
+    foundry_endpoint = os.environ.get("AZURE_MODEL_PROJECT_ENDPOINT") or os.environ.get(
+        "AZURE_AI_PROJECT_ENDPOINT"
+    )
+
+    if azure_endpoint and azure_api_key and not foundry_endpoint:
+        _chat_client = OpenAIChatClient(
+            model=model,
+            azure_endpoint=azure_endpoint,
+            api_key=azure_api_key,
+            api_version=azure_api_version,
+        )
+    elif foundry_endpoint:
+        _chat_client = FoundryChatClient(
+            project_endpoint=foundry_endpoint,
+            model=model,
+            credential=_credential,
+        )
+    else:
+        raise RuntimeError(
+            "No Azure credentials found for chat agent. Set either:\n"
+            "  - AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY (standard Azure OpenAI)\n"
+            "  - AZURE_MODEL_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT (Foundry project)\n"
+        )
+    return _chat_client
+
+
+def _build_chat_tools():
+    """Build the shared tool set for the chat agent (RAG, MCP, topology)."""
+    try:
+        _mcp_tools = create_mcp_tools()
+    except Exception:
+        logging.getLogger(__name__).debug("MCP tool creation failed — chat continues without MCP")
+        _mcp_tools = []
+    _rag_tools = create_rag_tools()
+    return [
+        *topology_tools.TOPOLOGY_TOOLS,
+        *_mcp_tools,
+        *_rag_tools,
+    ]
 
 
 def main():

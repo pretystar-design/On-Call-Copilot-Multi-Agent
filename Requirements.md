@@ -21,6 +21,10 @@
 - Use AgentSession to keep conversation context between invocations, https://learn.microsoft.com/en-us/agent-framework/agents/conversations/?pivots=programming-language-python
 - Use InMemoryHistoryProvider: https://learn.microsoft.com/en-us/agent-framework/agents/conversations/context-providers?pivots=programming-language-python
 - auto find all subscription name/id or get subscription name/id from user chat in agent.py
+- talk to chat agent when api/chat
+- chat-agent-api, update /api/chat in server.py to use chat agent instead of adding /api/chat in main.py
+  /opsx:propose chat-agent-api, update /api/chat in server.py to use chat agent instead of adding /api/chat in main.py  ,  delete the duplicate /api/chat block in main.py and point the browser at /api/chat in ui/server.py's version     
+
 
 ## Non-function requirement:
 

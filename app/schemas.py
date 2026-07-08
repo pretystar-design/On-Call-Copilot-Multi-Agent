@@ -175,3 +175,43 @@ TRIAGE_OUTPUT_SCHEMA: dict = {
         },
     },
 }
+
+# ---------------------------------------------------------------------------
+# Chat API schemas
+# ---------------------------------------------------------------------------
+
+CHAT_INPUT_SCHEMA: dict = {
+    "type": "object",
+    "required": ["message", "session_id"],
+    "properties": {
+        "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000,
+        },
+        "session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        },
+    },
+    "additionalProperties": False,
+}
+
+CHAT_OUTPUT_SCHEMA: dict = {
+    "type": "object",
+    "required": ["reply", "session_id"],
+    "properties": {
+        "reply": {"type": "string"},
+        "session_id": {"type": "string"},
+        "tool_calls": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string"},
+                    "status": {"type": "string"},
+                },
+            },
+        },
+    },
+}

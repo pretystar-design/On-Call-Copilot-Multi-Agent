@@ -280,6 +280,99 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
+# POST /api/chat – Chat with the SRE assistant
+# ---------------------------------------------------------------------------
+
+
+def _build_chat_agent_messages(session_id: str, message: str) -> list[dict]:
+    """Build the messages array for the chat agent, including history.
+
+    In mock mode this function is not used — we return mock responses directly.
+    In live mode it constructs a messages list with CHAT_INSTRUCTIONS as system
+    prompt, prior conversation history, and the current user message.
+    """
+    from app.agents.chat import CHAT_INSTRUCTIONS
+
+    history = _session_manager.get_history(session_id)
+    messages: list[dict] = [
+        {"role": "system", "content": CHAT_INSTRUCTIONS},
+    ]
+    for msg in history:
+        messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": message})
+    return messages
+
+
+@app.post("/api/chat")
+async def handle_chat(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # Validate input
+    try:
+        jsonschema.validate(instance=body, schema=CHAT_INPUT_SCHEMA)
+    except jsonschema.ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"Input validation: {exc.message}")
+
+    message: str = body["message"]
+    session_id: str = body["session_id"]
+
+    # Ensure session exists
+    _session_manager.get_or_create_session(session_id)
+
+    if MOCK_MODE:
+        mock_result = get_chat_mock_response(message)
+        reply = mock_result["reply"]
+        tool_calls = mock_result.get("tool_calls", [])
+        _session_manager.add_message(session_id, "user", message)
+        _session_manager.add_message(session_id, "assistant", reply)
+        return JSONResponse(
+            content={
+                "reply": reply,
+                "session_id": session_id,
+                "tool_calls": tool_calls,
+            }
+        )
+
+    # Live mode: call the Foundry / Azure OpenAI model
+    try:
+        client = _get_client()
+        messages = _build_chat_agent_messages(session_id, message)
+        response = client.agents.create_run(
+            model=MODEL_ROUTER_DEPLOYMENT,
+            messages=messages,
+        )
+        raw_reply = response.choices[0].message.content or ""
+    except AttributeError:
+        inference = client.inference
+        response = inference.complete(
+            model=MODEL_ROUTER_DEPLOYMENT,
+            messages=messages,
+        )
+        raw_reply = response.choices[0].message.content or ""
+    except Exception as exc:
+        logger.error("Chat model call failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Chat model call failed")
+
+    _session_manager.add_message(session_id, "user", message)
+    _session_manager.add_message(session_id, "assistant", raw_reply)
+
+    return JSONResponse(
+        content={
+            "reply": raw_reply,
+            "session_id": session_id,
+        }
+    )
+
+
+@app.get("/api/chat/health")
+async def chat_health():
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
 # Local dev server
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":

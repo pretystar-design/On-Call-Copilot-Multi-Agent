@@ -10,18 +10,29 @@ Opens at http://localhost:7860
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import sys
 import time
 import urllib.parse
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from pathlib import Path
 
 import requests
+
+# Ensure project root is on sys.path so `app` can be imported
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+
 from dotenv import load_dotenv
+
+from app.agents.chat import CHAT_INSTRUCTIONS
+from app.chat_agent import run_chat_agent
+from app.chat_session import SessionManager
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -54,6 +65,9 @@ LOCAL_SERVER_URL = os.environ.get("LOCAL_SERVER_URL", "http://localhost:8088")
 # at LOCAL_SERVER_URL instead of the Foundry API endpoint.
 LOCAL_MODE = os.environ.get("LOCAL_MODE", "").lower() in ("true", "1", "yes") or \
              os.environ.get("MOCK_MODE", "").lower() in ("true", "1", "yes")
+
+CHAT_SESSION_MANAGER = SessionManager()
+DEFAULT_CHAT_SESSION_ID = os.environ.get("CHAT_SESSION_ID") or str(uuid.uuid4())
 
 # ─── auth (skipped in mock/local mode) ──────────────────────────────────────────
 
@@ -96,65 +110,45 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
+def _build_chat_payload(messages: list[dict], session_id: str) -> dict:
+    """Normalize the browser chat payload into the chat-agent API shape."""
+    if not messages:
+        raise ValueError("messages is required")
+
+    last_user_content = None
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            last_user_content = message.get("content", "").strip()
+            break
+
+    if not last_user_content:
+        raise ValueError("A user message is required")
+
+    return {"message": last_user_content, "session_id": session_id}
+
+
+def _build_chat_agent_messages(session_id: str, message: str) -> list[dict]:
+    """Create the messages payload for the shared chat agent, including history."""
+    history = CHAT_SESSION_MANAGER.get_history(session_id)
+    messages: list[dict] = [{"role": "system", "content": CHAT_INSTRUCTIONS}]
+    for chat_message in history:
+        messages.append({"role": chat_message.role, "content": chat_message.content})
+    messages.append({"role": "user", "content": message})
+    return messages
+
+
 def _chat_agent(messages: list[dict]) -> str:
-    """Send a conversational chat to the agent and return the text response.
+    """Send a conversational chat to the shared chat agent and return the text response."""
+    session_id = DEFAULT_CHAT_SESSION_ID
+    payload = _build_chat_payload(messages, session_id)
+    CHAT_SESSION_MANAGER.get_or_create_session(session_id)
 
-    *messages* is a list of ``{"role": "user"|"assistant", "content": "..."}``.
-    A system prompt is prepended for conversational mode.
-    """
-    t0 = time.time()
+    agent_messages = _build_chat_agent_messages(session_id, payload["message"])
+    response_text = asyncio.run(run_chat_agent(agent_messages))
 
-    # Build the input with system prompt + conversation history
-    chat_input: list[dict] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
-    for m in messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        chat_input.append({"role": role, "content": content})
-
-    # The last user message becomes the main input; prior history goes into
-    # the conversation context via the previous assistant messages.
-    body = {"input": chat_input}
-
-    if LOCAL_MODE:
-        r = requests.post(
-            f"{LOCAL_SERVER_URL}/responses",
-            json=body, timeout=180,
-        )
-        if r.status_code != 200:
-            raise RuntimeError(
-                f"Local agent error ({r.status_code}): {r.text[:500]}"
-            )
-        raw = r.json()
-    else:
-        endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "").rstrip("/")
-        if not endpoint:
-            raise ValueError(
-                "AZURE_AI_PROJECT_ENDPOINT env var is not set.\n"
-                "Set LOCAL_MODE=true / MOCK_MODE=true for local testing."
-            )
-        agent_name = os.environ.get("AGENT_NAME", "oncall-copilot")
-        agent_version = os.environ.get("AGENT_VERSION", "")
-        agent_path = urllib.parse.quote(agent_name, safe="")
-        headers = _get_auth_headers()
-        r = requests.post(
-            f"{endpoint}/agents/{agent_path}/endpoint/protocols/openai/responses?api-version=2025-11-15-preview",
-            headers=headers, json=body, timeout=180,
-        )
-        raw = r.json()
-        if raw.get("error"):
-            raise RuntimeError(
-                f"Agent error ({r.status_code}): {raw['error'].get('message', json.dumps(raw['error']))}"
-            )
-
-    # Extract text from the response
-    text_parts: list[str] = []
-    for output in raw.get("output", []):
-        for c in output.get("content", []):
-            text = c.get("text", "").strip()
-            if text:
-                text_parts.append(text)
-
-    return "\n".join(text_parts) if text_parts else "(no response)"
+    CHAT_SESSION_MANAGER.add_message(session_id, "user", payload["message"])
+    CHAT_SESSION_MANAGER.add_message(session_id, "assistant", response_text)
+    return response_text
 
 
 def _get_auth_headers() -> dict:

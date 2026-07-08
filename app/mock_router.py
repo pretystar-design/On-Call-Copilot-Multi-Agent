@@ -47,6 +47,29 @@ def get_mock_response(incident_id: str) -> dict | None:
     return resp
 
 
+# ── Chat mock responses ──────────────────────────────────────────────────
+
+_CHAT_MOCK_RESPONSES: dict[str, str] = {
+    "redis": "To troubleshoot high Redis latency:\n\n1. Check `INFO CPU` — if `used_cpu_sys` is high, Redis is spending more time in kernel than userspace\n2. Check `INFO COMMANDSTATS` for slow commands (KEYS, SMEMBERS on large sets, etc.)\n3. Check `INFO MEMORY` for `maxmemory` pressure and eviction rates\n4. Check latency with `redis-cli --latency -h <host>` — anything above 1ms on local network warrants investigation\n5. Review slowlog: `SLOWLOG GET 10`\n\nWhat specific aspect would you like to investigate further?",
+    "aks": "Here's how to investigate your AKS cluster:\n\n1. Check node pool status: `az aks nodepool show --resource-group <rg> --cluster-name <name> --name <pool>`\n2. Check pod states: `kubectl get pods --all-namespaces` — look for Pending, CrashLoopBackOff, ImagePullBackOff\n3. For CrashLoopBackOff pods: `kubectl logs <pod> --previous` to see the last crash reason\n4. Check cluster autoscaler events: `kubectl get events --all-namespaces | grep -i scale`\n5. Verify node conditions: `kubectl describe nodes | grep -A5 Conditions`\n\nWhat issue are you seeing in your cluster?",
+    "topology": "I can help you explore your infrastructure topology. I have access to both Azure and GCP topology tools.\n\nTo get started, I can check:\n- Azure resource groups, virtual networks, and AKS clusters\n- GCP projects, VPCs, and GKE clusters\n\nWould you like me to look up topology for a specific provider or region?",
+    "default": "Hello! I'm the On-Call Copilot SRE assistant. I can help you with:\n\n- **Azure & GCP infrastructure**: Cluster topology, resource health, networking\n- **Kubernetes**: Pod troubleshooting, node issues, autoscaler configuration\n- **Monitoring & Alerts**: Debugging alerts, log analysis, runbooks\n- **SRE Best Practices**: Incident response, postmortems, reliability patterns\n\nWhat would you like help with today?",
+}
+
+
+def get_chat_mock_response(message: str) -> dict:
+    """Return a deterministic mock chat response based on keyword matching.
+
+    Maps keywords in the user message to pre-built replies. Falls back to
+    a generic greeting if no keywords match.
+    """
+    msg_lower = message.lower()
+    for keyword, reply in _CHAT_MOCK_RESPONSES.items():
+        if keyword in msg_lower:
+            return {"reply": reply, "tool_calls": []}
+    return {"reply": _CHAT_MOCK_RESPONSES["default"], "tool_calls": []}
+
+
 class MockModelResponse:
     """Mimics the shape of a chat completion response for the mock path."""
 
