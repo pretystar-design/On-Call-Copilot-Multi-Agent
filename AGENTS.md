@@ -258,3 +258,69 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for detailed configuration op
 | **Instructions as config** | Agent behaviour is a text string, not code logic |
 | **No hallucination** | Sparse data → `confidence: 0` + `missing_information` |
 | **Secret redaction** | Credential patterns scrubbed before reaching model output |
+
+---
+
+## A2A (Agent-to-Agent) Protocol Access
+
+Each specialist agent and the orchestrated workflow are also exposed via the A2A protocol,
+an open standard for agent-to-agent interoperability. This enables external agents built with
+different frameworks to discover and communicate with On-Call Copilot's agents.
+
+### Architecture
+
+The A2A server runs on a **separate port** (default 8089) alongside the main Responses API (8088):
+
+```
+                     Port 8088              Port 8089
+                 ┌──────────────────┐  ┌─────────────────────┐
+                 │ Responses API    │  │ A2A Protocol        │
+                 │ (Foundry)        │  │ (Starlette + JSONRPC)│
+                 └──────────────────┘  └──────────┬──────────┘
+                                                   │
+                          ┌────────────────────────┼────────────────────────┐
+                          ▼                        ▼                        ▼
+                   ┌────────────┐           ┌────────────┐           ┌────────────┐
+                   │ /a2a/triage│           │/a2a/summary│           │/a2a/chat   │
+                   │ AgentCard  │           │ AgentCard  │    ...    │ AgentCard  │
+                   └────────────┘           └────────────┘           └────────────┘
+```
+
+### Endpoints
+
+| Agent | Path | Description |
+|-------|------|-------------|
+| Orchestrated workflow | `POST /` | Full concurrent analysis (all 4 agents) |
+| Triage | `POST /a2a/triage/` | Root cause analysis only |
+| Summary | `POST /a2a/summary/` | Incident summary only |
+| Comms | `POST /a2a/comms/` | Communications only |
+| PIR | `POST /a2a/pir/` | Post-incident report only |
+| Chat | `POST /a2a/chat/` | Conversational SRE chat |
+
+Each endpoint serves an A2A AgentCard at `/.well-known/agent-card.json` under its path prefix
+(e.g., `GET /a2a/triage/.well-known/agent-card.json`).
+
+### Usage from External Agents
+
+```python
+from agent_framework.a2a import A2AAgent
+
+# Connect to the orchestrated workflow
+async with A2AAgent(
+    name="oncall-copilot",
+    url="http://your-host:8089",
+) as agent:
+    response = await agent.run(
+        '{"incident_id": "INC-001", "title": "...", "severity": "SEV2"}'
+    )
+
+# Or to a single specialist
+async with A2AAgent(
+    name="triage",
+    url="http://your-host:8089/a2a/triage",
+) as agent:
+    response = await agent.run("Analyze this alert data...")
+```
+
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full A2A configuration reference,
+including port settings, AgentCard properties, and streaming support.

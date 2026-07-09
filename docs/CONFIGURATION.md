@@ -245,6 +245,155 @@ az cognitiveservices agent start \
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full build and deployment guide.
 
+
+
+---
+
+## A2A (Agent-to-Agent) Protocol Configuration
+
+The A2A protocol server exposes individual specialist agents and the concurrent workflow as
+A2A-compliant JSON-RPC endpoints discoverable via AgentCards.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `A2A_PORT` | `8089` | Port for the A2A protocol server |
+| `A2A_BASE_URL` | `http://localhost:8089` | Base URL used in AgentCard metadata for external agent discovery |
+| `A2A_ENABLED` | `true` | Set to `false` to disable the A2A server entirely |
+
+### Endpoints
+
+| Agent | RPC Endpoint | AgentCard |
+|-------|-------------|-----------|
+| Orchestrator | `POST /` | `GET /.well-known/agent-card.json` |
+| Triage | `POST /a2a/triage/` | `GET /a2a/triage/.well-known/agent-card.json` |
+| Summary | `POST /a2a/summary/` | `GET /a2a/summary/.well-known/agent-card.json` |
+| Comms | `POST /a2a/comms/` | `GET /a2a/comms/.well-known/agent-card.json` |
+| PIR | `POST /a2a/pir/` | `GET /a2a/pir/.well-known/agent-card.json` |
+| Chat | `POST /a2a/chat/` | `GET /a2a/chat/.well-known/agent-card.json` |
+
+### AgentCard Properties
+
+Each AgentCard exposes:
+- **Name** — Agent display name
+- **Description** — Role and capabilities
+- **Version** — `1.0.0`
+- **Capabilities** — `streaming: true` (all agents support SSE streaming)
+- **Skills** — Domain-specific skill metadata with `id`, `name`, `description`, and `tags`
+
+### Connecting with an A2A Client
+
+```python
+import httpx
+from a2a.client import A2ACardResolver
+from agent_framework.a2a import A2AAgent
+
+async with httpx.AsyncClient(timeout=60.0) as http_client:
+    resolver = A2ACardResolver(
+        httpx_client=http_client,
+        base_url="http://localhost:8089/a2a/triage",
+    )
+    agent_card = await resolver.get_agent_card()
+
+async with A2AAgent(
+    name=agent_card.name,
+    agent_card=agent_card,
+    url="http://localhost:8089/a2a/triage",
+) as agent:
+    response = await agent.run("What are your capabilities?")
+    print(response.text)
+```
+
+### Local Testing
+
+```bash
+# Start the A2A server (alongside the main hosted agent):
+python main.py
+
+# In another terminal, run the smoke test:
+python scripts/test_a2a.py
+
+# Test only the orchestrate endpoint:
+python scripts/test_a2a.py --orchestrate-only
+```
+
+### Architecture
+
+- The A2A server runs on its own port (default 8089), separate from the Responses API (8088)
+- It is started in a daemon thread from `main()` before the Responses API blocks
+- Each agent uses an independent `A2AExecutor` + `DefaultRequestHandler` + `InMemoryTaskStore`
+- All agents share the same chat client and LLM configuration
+- Streaming is enabled for all endpoints via `A2AExecutor(agent, stream=True)`
+
+### Connecting to External A2A Agents
+
+Use the `A2AAgent` client class to connect this application to remote A2A-compliant agents:
+
+```python
+from agent_framework.a2a import A2AAgent
+
+async with A2AAgent(
+    name="remote-agent",
+    url="https://remote-a2a-agent.example.com",
+) as agent:
+    response = await agent.run("Analyze this incident...")
+```
+
+---
+
+## Remote A2A Agent Configuration
+
+The On-Call Copilot can call out to remote A2A-compliant agents for specialized analysis.
+Each configured remote agent becomes a function tool available to all specialist agents
+(triage, summary, comms, PIR) and the chat agent.
+
+### Environment Variable
+
+`A2A_REMOTE_AGENTS` — JSON array of remote agent definitions:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | — | Kebab-case identifier (e.g. `network-diag`). Becomes `call_<name>_agent` tool name |
+| `url` | Yes | — | Base URL of the remote A2A agent endpoint |
+| `description` | Yes | — | Purpose description shown to AI agents as the tool's description |
+| `auth_token` | No | — | Bearer token for authenticated endpoints |
+| `timeout_seconds` | No | `60` | HTTP timeout for calls to this agent (1–600) |
+
+### Example Configuration
+
+```json
+A2A_REMOTE_AGENTS='[
+  {
+    "name": "network-diag",
+    "url": "https://net-diag.example.com/a2a",
+    "description": "Network diagnostics for Azure VNETs, subnets, and NSGs",
+    "auth_token": "your-token-here",
+    "timeout_seconds": 30
+  },
+  {
+    "name": "security-scan",
+    "url": "https://security-scanner.internal/a2a",
+    "description": "Cloud security posture scan for misconfigurations and vulnerabilities"
+  }
+]'
+```
+
+### How It Works
+
+1. At startup, `A2A_REMOTE_AGENTS` is parsed from the environment
+2. Each entry creates an async `FunctionTool` named `call_<name>_agent`
+3. Tools are added to the shared tool set (`_tools`) alongside topology, MCP, and RAG tools
+4. When an agent invokes the tool, a transient `A2AAgent` connection is created to the remote URL
+5. The message is sent, and the response is returned as text
+6. Errors (timeout, unreachable, HTTP error) are caught and returned as descriptive error strings
+
+### Security Notes
+
+- Auth tokens in environment variables carry the same considerations as `AZURE_OPENAI_API_KEY` or `MCP_SERVERS`
+- For production, use a secret manager or managed identity to inject tokens
+- The auth token is sent as a Bearer token in the `Authorization` header
+
 ---
 
 ## Testing Agent Output
@@ -264,4 +413,9 @@ python scripts/test_agents_direct.py --demo 1 # use a different demo payload
 **Validate JSON schema only:**
 ```bash
 python scripts/validate.py
+```
+
+**A2A protocol smoke test:**
+```bash
+python scripts/test_a2a.py
 ```

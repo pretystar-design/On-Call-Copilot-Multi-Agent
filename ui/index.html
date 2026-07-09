@@ -145,6 +145,10 @@ select { font-family: inherit; }
   transition: all 0.15s;
 }
 .topbar-action:hover { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,0.06); }
+#rag-reindex-btn.loading { opacity: 0.6; cursor: wait; }
+#rag-reindex-btn .rag-spinner { display: none; }
+#rag-reindex-btn.loading .rag-spinner { display: inline; }
+#rag-reindex-btn.loading .rag-label { display: none; }
 
 /* ═══════════════════════════════════════════════  LAYOUT  ════════ */
 .main {
@@ -850,12 +854,11 @@ select { font-family: inherit; }
   <button id="theme-toggle" class="topbar-action" onclick="toggleTheme()" title="Toggle light/dark theme" aria-label="Toggle theme">🌙 Dark</button>
   <button class="topbar-action" onclick="openConfig()">⚙ Configure</button>
   <button id="chat-toggle" class="topbar-action" onclick="toggleChat()" title="Open chat">💬 Chat</button>
+  <button id="rag-reindex-btn" class="topbar-action" onclick="reindexRag()" title="Re-index knowledge base documents" aria-label="Re-index RAG">📁 Re-index RAG</button>
 </header>
 
-<!-- ════════ MAIN LAYOUT ════════ -->
+<!-- ⭐⭐⭐⭐⭐⭐⭐⭐  MAIN LAYOUT ⭐⭐⭐⭐⭐⭐⭐⭐ -->
 <div class="main">
-
-  <!-- ── LEFT PANEL: INCIDENT INPUT ── -->
   <div class="left-panel">
     <div class="panel-header">
       <div class="panel-tag">Input</div>
@@ -1090,6 +1093,7 @@ function updateConfigUI(cfg) {
   const pill = document.getElementById('cfg-pill');
   const badge = document.getElementById('live-badge');
   const agentLabel = document.getElementById('agent-label');
+  const ragBtn = document.getElementById('rag-reindex-btn');
 
   if (cfg.configured) {
     const host = cfg.endpoint.replace(/^https?:\/\//, '').split('/')[0];
@@ -1101,6 +1105,15 @@ function updateConfigUI(cfg) {
     pill.textContent = '⚠ endpoint not set';
     pill.classList.add('unconfigured');
     badge.style.display = 'none';
+  }
+
+  // Show/hide RAG re-index button based on config
+  if (ragBtn) {
+    if (cfg.rag_enabled === false) {
+      ragBtn.style.display = 'none';
+    } else {
+      ragBtn.style.display = '';
+    }
   }
 }
 
@@ -1649,6 +1662,54 @@ function showSuccessFlash(elapsed) {
     el.classList.add('fading');
     setTimeout(() => el.remove(), 500);
   }, 3000);
+}
+
+function showToast(message, type = 'success') {
+  const el = document.createElement('div');
+  el.className = 'success-flash';
+  el.style.borderColor = type === 'error' ? 'var(--red)' : 'var(--green)';
+  el.style.color = type === 'error' ? 'var(--red)' : 'var(--green)';
+  el.style.background = type === 'error' ? 'rgba(255,123,114,0.12)' : 'rgba(63,185,80,0.12)';
+  el.innerHTML = message;
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('fading');
+    setTimeout(() => el.remove(), 500);
+  }, 4000);
+}
+
+// ═══════════════════════════════════════  RAG RE-INDEX  ════════
+async function reindexRag() {
+  const btn = document.getElementById('rag-reindex-btn');
+  if (btn.classList.contains('loading')) return;
+
+  btn.classList.add('loading');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="rag-spinner">⏳</span><span class="rag-label">Indexing…</span>';
+
+  try {
+    const r = await fetch('/api/rag/reindex', { method: 'POST' });
+    const d = await r.json();
+
+    if (d.status === 'ok') {
+      let msg = `✓ Indexed ${d.total_documents} document(s)`;
+      if (d.success_count && d.success_count !== d.total_documents) {
+        msg += ` (${d.success_count} chunks, ${d.error_count} errors)`;
+      }
+      if (d.warning) {
+        msg += `<br><span style="font-weight:400;">${escHtml(d.warning)}</span>`;
+      }
+      showToast(msg);
+    } else {
+      showToast(`✗ ${escHtml(d.error || 'Re-index failed')}`, 'error');
+    }
+  } catch (e) {
+    showToast(`✗ Network error: ${escHtml(e.message)}`, 'error');
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+    btn.innerHTML = '📁 Re-index RAG';
+  }
 }
 
 // ═══════════════════════════════════════  CONFIG MODAL  ═══════════════════════════

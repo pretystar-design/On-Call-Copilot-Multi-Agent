@@ -3,6 +3,10 @@ name: oncall-copilot
 protocols:
     - protocol: responses
       version: 1.0.0
+    - protocol: a2a
+      version: 1.0.0
+  # Note: A2A runs on a separate configurable port (A2A_PORT, default 8089)
+  # alongside the main Responses API on port 8088.
 environment_variables:
     - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
       value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
@@ -30,3 +34,9 @@ environment_variables:
       value: ${ELASTIC_CLOUD_ENDPOINT}
     - name: ELASTIC_API_KEY
       value: ${ELASTIC_API_KEY}
+    - name: A2A_PORT
+      value: ${A2A_PORT}
+    - name: A2A_BASE_URL
+      value: ${A2A_BASE_URL}
+    - name: A2A_ENABLED
+      value: ${A2A_ENABLED}

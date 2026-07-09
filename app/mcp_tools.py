@@ -9,7 +9,17 @@ logger = logging.getLogger(__name__)
 
 
 def create_mcp_tools() -> list[Any]:
-    """Create MCPStdioTool instances from the MCP_SERVERS env var."""
+    """Create MCPStdioTool instances from the MCP_SERVERS env var.
+
+    Each MCP server definition is parsed from the ``MCP_SERVERS`` JSON
+    environment variable. Servers that fail to create (e.g. invalid config)
+    are logged as warnings and skipped. Runtime connection errors are
+    reported by the agent framework when the tool is first used.
+
+    Returns:
+        A list of ``MCPStdioTool`` instances, or an empty list if none
+        could be created.
+    """
     try:
         from agent_framework import MCPStdioTool  # noqa:PLC0415
     except ImportError:
@@ -56,11 +66,22 @@ def create_mcp_tools() -> list[Any]:
                 load_prompts=_server.get("load_prompts", False),
             )
             tools.append(tool)
-            logger.info("Created MCPStdioTool '%s'", name)
+            logger.info(
+                "MCP tool '%s' created (command: %s, args: %s)",
+                name, command, args,
+            )
         except ImportError:
             logger.warning("MCPStdioTool not available - install mcp package")
             return []
         except Exception as exc:  # noqa:BLE001
             logger.warning("Failed to create MCPStdioTool '%s': %s", name, exc)
+
+    if tools:
+        logger.info("%d MCP server(s) configured", len(tools))
+    elif servers:
+        logger.warning(
+            "All %d MCP server(s) failed to create. Check the MCP_SERVERS configuration.",
+            len(servers),
+        )
 
     return tools

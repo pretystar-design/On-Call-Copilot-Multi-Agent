@@ -18,14 +18,31 @@
 - Add a chat box to chat with AI
 - Add a button to index the RAG documents
 - Add a button to trigger patrol and Auto find issues from ELK or Infra topology
-- Use AgentSession to keep conversation context between invocations, https://learn.microsoft.com/en-us/agent-framework/agents/conversations/?pivots=programming-language-python
-- Use InMemoryHistoryProvider: https://learn.microsoft.com/en-us/agent-framework/agents/conversations/context-providers?pivots=programming-language-python
+  /opsx:propose add-rag-index-button, index all files in knowledge folder including subfolder
+  /opsx:apply add-rag-index-button
+- /opsx:propose Use AgentSession to keep conversation context between invocations, https://learn.microsoft.com/en-us/agent-framework/agents/conversations/?pivots=programming-language-python
+  /opsx:apply agent-conversation-session
+- /opsx:propose Use InMemoryHistoryProvider: https://learn.microsoft.com/en-us/agent-framework/agents/conversations/context-providers?pivots=programming-language-python
 - auto find all subscription name/id or get subscription name/id from user chat in agent.py
 - talk to chat agent when api/chat
 - chat-agent-api, update /api/chat in server.py to use chat agent instead of adding /api/chat in main.py
   /opsx:propose chat-agent-api, update /api/chat in server.py to use chat agent instead of adding /api/chat in main.py  ,  delete the duplicate /api/chat block in main.py and point the browser at /api/chat in ui/server.py's version     
+- /opsx:propose follow https://learn.microsoft.com/en-us/agent-framework/integrations/a2a?tabs=dotnet-cli%2Cuser-secrets&pivots=programming-language-python to enable a2a protocol to connect to multiple AI agents
+  /opsx:propose be abel to connect to multiple other AI agents
+  /opsx:apply enable-a2a-protocol
 
-
+`
+```ES
+If MCP is available but the URL is wrong — Check the Agent Builder UI in Kibana for the correct "MCP Endpoint" or "API Endpoint" URL shown in the agent configuration page. The correct URL format    
+    could be different from what's currently configured.                                                                                                                                                  
+                                                                                                                                                                                                          
+ 2. If MCP needs to be enabled — An Elastic Cloud admin may need to enable the MCP feature on this deployment through the Elastic Cloud console.                                                          
+                                                                                                                                                                                                          
+ 3. Temporarily disable the failing MCP server — Remove the elastic-agent-builder entry from MCP_SERVERS in .env, which will stop the 404 errors and recovery loops. The ado MCP server (Azure DevOps)    
+    works fine as a stdio connection.                                                                                                                                                                     
+                                                                                                                                                                                                          
+ 4. Use the Agent Builder API directly — Instead of MCP, you can invoke the agent programmatically via POST /s/{space}/api/agent_builder/agents/{id}/chat using the same API key.
+```
 ## Non-function requirement:
 
 <!--

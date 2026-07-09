@@ -6,11 +6,14 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from agent_framework import Agent, Message
 
 from app.agents.chat import CHAT_INSTRUCTIONS
 from app.config import get_azure_credential
 from app.infra_topology import tool_definitions as topology_tools
+from app.mcp_tools import create_mcp_tools
 from app.rag import create_rag_tools
+from app.a2a_remote import create_remote_a2a_tools
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -52,13 +55,37 @@ def _get_chat_client():
 
 
 def _build_chat_tools() -> list:
+    try:
+        mcp_tools = create_mcp_tools()
+    except Exception:
+        logger.debug("MCP tool creation failed — chat continues without MCP")
+        mcp_tools = []
     rag_tools = create_rag_tools()
-    return [*topology_tools.TOPOLOGY_TOOLS, *rag_tools]
+    remote_a2a_tools = create_remote_a2a_tools()
+    return [*topology_tools.TOPOLOGY_TOOLS, *mcp_tools, *rag_tools, *remote_a2a_tools]
+
+
+def create_chat_agent(chat_client=None) -> Agent:
+    """Create a reusable chat Agent instance.
+
+    Args:
+        chat_client: Optional pre-built chat client. If None, one is created.
+
+    Returns:
+        An Agent configured for conversational SRE chat.
+    """
+    if chat_client is None:
+        chat_client = _get_chat_client()
+    tools = _build_chat_tools()
+    return Agent(
+        client=chat_client,
+        instructions=CHAT_INSTRUCTIONS,
+        name="chat-agent",
+        tools=tools,
+    )
 
 
 async def run_chat_agent(messages: list[dict]) -> str:
-    from agent_framework import Message
-
     converted_messages = [
         Message(
             role=message.get("role", "user"),
@@ -67,18 +94,7 @@ async def run_chat_agent(messages: list[dict]) -> str:
         for message in messages
     ]
 
-    client = _get_chat_client()
-    tools = _build_chat_tools()
-
-    from agent_framework import Agent
-
-    agent = Agent(
-        client=client,
-        instructions=CHAT_INSTRUCTIONS,
-        name="chat-agent",
-        tools=tools,
-    )
-
+    agent = create_chat_agent()
     result = await agent.run(messages=converted_messages)
     if hasattr(result, "output"):
         return str(result.output)

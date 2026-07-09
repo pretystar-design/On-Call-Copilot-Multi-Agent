@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -33,8 +34,11 @@ from dotenv import load_dotenv
 from app.agents.chat import CHAT_INSTRUCTIONS
 from app.chat_agent import run_chat_agent
 from app.chat_session import SessionManager
+from app.rag import reindex_knowledge_base
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMOS_DIR     = ROOT / "scripts" / "demos"
@@ -302,11 +306,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/config":
             endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "")
+            rag_disabled = os.environ.get("RAG__DISABLE", "").lower() in ("1", "true", "yes")
+            rag_enabled = not rag_disabled and ROOT.joinpath("knowledge").is_dir()
             self._send_json({
                 "endpoint": endpoint,
                 "agent_name": os.environ.get("AGENT_NAME", "oncall-copilot"),
                 "agent_version": os.environ.get("AGENT_VERSION", "latest"),
                 "configured": bool(endpoint),
+                "rag_enabled": rag_enabled,
             })
             return
 
@@ -344,6 +351,16 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
+        if self.path == "/api/rag/reindex":
+            try:
+                result = reindex_knowledge_base()
+                status_code = 200 if result.get("status") == "ok" else 409 if result.get("error") == "A re-index operation is already in progress." else 500
+                self._send_json(result, status_code)
+            except Exception as exc:
+                logger.exception("RAG re-index failed")
+                self._send_json({"status": "error", "error": str(exc)}, 500)
+            return
+
         if self.path == "/api/chat":
             try:
                 body_bytes = self._read_body()
