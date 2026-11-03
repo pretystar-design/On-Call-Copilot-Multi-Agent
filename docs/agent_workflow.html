@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>On-Call Copilot — Agent Workflow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #21262d;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --purple: #bc8cff;
+    --orange: #f0883e;
+    --red: #ff7b72;
+    --yellow: #e3b341;
+    --cyan: #39d2c0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    padding: 32px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 24px;
+    margin-bottom: 4px;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .subtitle { color: var(--text2); font-size: 13px; margin-bottom: 32px; }
+
+  .diagram {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* ─── Node base ─── */
+  .node {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 24px;
+    text-align: center;
+    position: relative;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .node:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .node-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .node-desc { font-size: 11px; color: var(--text2); }
+  .node-icon { font-size: 20px; margin-bottom: 6px; }
+
+  /* ─── Input node ─── */
+  .input-node {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, rgba(88,166,255,0.08), var(--bg2));
+    min-width: 320px;
+  }
+
+  /* ─── Precondition nodes ─── */
+  .precondition-row {
+    display: flex;
+    gap: 16px;
+    margin: 0;
+  }
+  .precondition-node {
+    border-color: var(--cyan);
+    background: rgba(57,210,192,0.06);
+    min-width: 200px;
+  }
+
+  /* ─── Orchestrator node ─── */
+  .orchestrator-node {
+    border-color: var(--purple);
+    background: linear-gradient(135deg, rgba(188,140,255,0.1), var(--bg2));
+    min-width: 360px;
+    padding: 20px 32px;
+  }
+  .orchestrator-node .node-title { font-size: 16px; }
+
+  /* ─── Agent nodes ─── */
+  .agents-row {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .agent-node {
+    min-width: 220px;
+    max-width: 240px;
+  }
+  .agent-triage { border-color: var(--red); }
+  .agent-triage .node-icon { color: var(--red); }
+  .agent-summary { border-color: var(--accent); }
+  .agent-summary .node-icon { color: var(--accent); }
+  .agent-comms { border-color: var(--green); }
+  .agent-comms .node-icon { color: var(--green); }
+  .agent-pir { border-color: var(--orange); }
+  .agent-pir .node-icon { color: var(--orange); }
+
+  .agent-output {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    text-align: left;
+  }
+  .output-key {
+    display: inline-block;
+    font-size: 10px;
+    font-family: 'SF Mono', Monaco, monospace;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bg3);
+    color: var(--text2);
+    margin: 2px;
+  }
+
+  /* ─── Merge node ─── */
+  .merge-node {
+    border-color: var(--yellow);
+    background: rgba(227,179,65,0.06);
+    min-width: 360px;
+  }
+
+  /* ─── Output nodes ─── */
+  .output-row {
+    display: flex;
+    gap: 16px;
+  }
+  .output-node {
+    border-color: var(--green);
+    background: rgba(63,185,80,0.06);
+    min-width: 240px;
+  }
+
+  /* ─── Connector lines ─── */
+  .connector {
+    width: 2px;
+    height: 32px;
+    background: var(--border);
+    margin: 0 auto;
+    position: relative;
+  }
+  .connector::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid var(--border);
+  }
+  .connector-label {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--text2);
+    white-space: nowrap;
+    background: var(--bg);
+    padding: 0 4px;
+  }
+
+  /* ─── Fan-out connector ─── */
+  .fanout {
+    width: 100%;
+    height: 32px;
+    position: relative;
+    max-width: 1000px;
+  }
+  .fanout-line {
+    position: absolute;
+    background: var(--border);
+  }
+  .fanout-vertical {
+    width: 2px;
+    height: 16px;
+    left: 50%;
+    top: 0;
+  }
+  .fanout-horizontal {
+    height: 2px;
+    top: 16px;
+    left: 12%;
+    right: 12%;
+  }
+  .fanout-down {
+    width: 2px;
+    height: 16px;
+    top: 16px;
+  }
+
+  /* ─── Tools panel ─── */
+  .tools-panel {
+    margin-top: 40px;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+  }
+  .tools-panel h3 {
+    font-size: 14px;
+    margin-bottom: 12px;
+    color: var(--text2);
+  }
+  .tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+  }
+  .tool-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .tool-icon { font-size: 14px; }
+
+  /* ─── Legend ─── */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 24px;
+    justify-content: center;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text2);
+  }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+  }
+
+  /* ─── Flow label ─── */
+  .flow-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ─── Animated flow ─── */
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  .flow-indicator {
+    width: 2px;
+    height: 32px;
+    background: linear-gradient(to bottom, transparent, var(--accent), transparent);
+    background-size: 100% 200%;
+    animation: flow 2s linear infinite;
+  }
+  @keyframes flow {
+    0% { background-position: 0 -100%; }
+    100% { background-position: 0 100%; }
+  }
+
+  .port-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-family: monospace;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--bg3);
+    color: var(--accent);
+    border: 1px solid var(--border);
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<h1>On-Call Copilot — Agent Workflow</h1>
+<p class="subtitle">Multi-agent concurrent orchestration for incident response · powered by Microsoft Agent Framework</p>
+
+<div class="diagram">
+
+  <!-- ════════ INPUT ════════ -->
+  <div class="node input-node">
+    <div class="node-icon">📦</div>
+    <div class="node-title">Incident JSON Input</div>
+    <div class="node-desc">incident_id · title · severity · timeframe · alerts · logs · metrics · runbook_excerpt</div>
+  </div>
+
+  <div class="flow-indicator"></div>
+
+  <!-- ════════ PRECONDITION ════════ -->
+  <div class="node" style="border-color: var(--cyan); min-width: 400px;">
+    <div class="node-icon" style="color: var(--cyan);">🔍</div>
+    <div class="node-title">Precondition: Topology Discovery</div>
+    <div class="node-desc">Fetch infrastructure context before specialist agents run</div>
+  </div>
+
+  <div class="precondition-row" style="margin-top: 12px;">
+    <div class="node precondition-node">
+      <div class="node-icon">☁️</div>
+      <div class="node-title">AzureTopologyAgent</div>
+      <div class="node-desc">subscription · resource groups · services</div>
+    </div>
+    <div class="node precondition-node">
+      <div class="node-icon">🌐</div>
+      <div class="node-title">GCPTopologyAgent</div>
+      <div class="node-desc">projects · instances · services</div>
+    </div>
+  </div>
+
+  <div class="flow-indicator"></div>
+
+  <!-- ════════ ORCHESTRATOR ════════ -->
+  <div class="node orchestrator-node">
+    <div class="node-icon" style="color: var(--purple);"> orchestrator</div>
+    <div class="node-title">OncallCopilotAgent (Orchestrator)</div>
+    <div class="node-desc">ConcurrentBuilder · asyncio.gather() · 4 agents run in parallel</div>
+  </div>
+
+  <!-- Fan-out -->
+  <div class="fanout">
+    <div class="fanout-line fanout-vertical"></div>
+    <div class="fanout-line fanout-horizontal"></div>
+    <div class="fanout-line fanout-down" style="left: 12.5%;"></div>
+    <div class="fanout-line fanout-down" style="left: 37.5%;"></div>
+    <div class="fanout-line fanout-down" style="left: 62.5%;"></div>
+    <div class="fanout-line fanout-down" style="left: 87.5%;"></div>
+  </div>
+
+  <!-- ════════ 4 SPECIALIST AGENTS ════════ -->
+  <div class="agents-row">
+
+    <!-- Triage -->
+    <div class="node agent-node agent-triage">
+      <div class="node-icon">🩺</div>
+      <div class="node-title">Triage Agent</div>
+      <div class="node-desc">Root cause analysis & immediate actions</div>
+      <div class="agent-output">
+        <span class="output-key">suspected_root_causes</span>
+        <span class="output-key">immediate_actions</span>
+        <span class="output-key">missing_information</span>
+        <span class="output-key">runbook_alignment</span>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="node agent-node agent-summary">
+      <div class="node-icon">📋</div>
+      <div class="node-title">Summary Agent</div>
+      <div class="node-desc">Concise incident narrative for SRE</div>
+      <div class="agent-output">
+        <span class="output-key">summary.what_happened</span>
+        <span class="output-key">summary.current_status</span>
+      </div>
+    </div>
+
+    <!-- Comms -->
+    <div class="node agent-node agent-comms">
+      <div class="node-icon">📢</div>
+      <div class="node-title">Comms Agent</div>
+      <div class="node-desc">Audience-appropriate communications</div>
+      <div class="agent-output">
+        <span class="output-key">comms.slack_update</span>
+        <span class="output-key">comms.stakeholder_update</span>
+      </div>
+    </div>
+
+    <!-- PIR -->
+    <div class="node agent-node agent-pir">
+      <div class="node-icon">📝</div>
+      <div class="node-title">PIR Agent</div>
+      <div class="node-desc">Post-incident report & prevention</div>
+      <div class="agent-output">
+        <span class="output-key">pir.timeline</span>
+        <span class="output-key">pir.customer_impact</span>
+        <span class="output-key">pir.prevention_actions</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Fan-in -->
+  <div class="fanout">
+    <div class="fanout-line fanout-down" style="left: 12.5%; top: 0; height: 16px;"></div>
+    <div class="fanout-line fanout-down" style="left: 37.5%; top: 0; height: 16px;"></div>
+    <div class="fanout-line fanout-down" style="left: 62.5%; top: 0; height: 16px;"></div>
+    <div class="fanout-line fanout-down" style="left: 87.5%; top: 0; height: 16px;"></div>
+    <div class="fanout-line fanout-horizontal" style="top: 16px;"></div>
+    <div class="fanout-line fanout-vertical" style="top: 16px; height: 16px;"></div>
+  </div>
+
+  <!-- ════════ MERGE ════════ -->
+  <div class="node merge-node">
+    <div class="node-icon" style="color: var(--yellow);">🔀</div>
+    <div class="node-title">Merge JSON Fragments</div>
+    <div class="node-desc">Combine all agent outputs into unified structured response</div>
+  </div>
+
+  <div class="flow-indicator"></div>
+
+  <!-- ════════ HOSTING OUTPUTS ════════ -->
+  <div class="output-row">
+    <div class="node output-node">
+      <div class="node-icon" style="color: var(--green);">🚀</div>
+      <div class="node-title">Responses API Server</div>
+      <div class="node-desc">Foundry Responses API protocol</div>
+      <span class="port-badge">port 8088</span>
+    </div>
+    <div class="node output-node">
+      <div class="node-icon" style="color: var(--green);">🔗</div>
+      <div class="node-title">A2A Protocol Server</div>
+      <div class="node-desc">Agent-to-Agent JSON-RPC endpoints</div>
+      <span class="port-badge">port 8089</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════ SHARED TOOLS ════════ -->
+<div class="tools-panel">
+  <h3>🛠 Shared Tools (available to all specialist agents)</h3>
+  <div class="tools-grid">
+    <div class="tool-item"><span class="tool-icon">🗺️</span> Topology Tools (Azure + GCP)</div>
+    <div class="tool-item"><span class="tool-icon">🔌</span> MCP Server Tools</div>
+    <div class="tool-item"><span class="tool-icon">📚</span> RAG Knowledge Base Search</div>
+    <div class="tool-item"><span class="tool-icon">🤖</span> A2A Remote Agent Tools</div>
+    <div class="tool-item"><span class="tool-icon">🎓</span> Skills Context (Elastic + Azure)</div>
+  </div>
+</div>
+
+<!-- ════════ LEGEND ════════ -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background: var(--accent);"></div> Input / Data</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--cyan);"></div> Precondition</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--purple);"></div> Orchestrator</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--red);"></div> Triage</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--accent);"></div> Summary</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--green);"></div> Comms</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--orange);"></div> PIR</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--yellow);"></div> Merge</div>
+  <div class="legend-item"><div class="legend-dot" style="background: var(--green);"></div> Hosting Output</div>
+</div>
+
+</body>
+</html>
